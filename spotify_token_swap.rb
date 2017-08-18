@@ -5,46 +5,22 @@ require 'base64'
 require 'json'
 require 'encrypted_strings'
 
-# This is an example token swap service written
-# as a Ruby/Sinatra service. This is required by
-# the iOS SDK to authenticate a user.
-#
-# The service requires the Sinatra and
-# encrypted_strings gems be installed:
-#
-# $ gem install sinatra encrypted_strings
-#
-# To run the service, enter your client ID, client
-# secret and client callback URL below and run the
-# project.
-#
-# $ ruby spotify_token_swap.rb
-#
-# IMPORTANT: The example credentials will work for the
-# example apps, you should use your own in your real
-# environment. as these might change at any time.
-#
-# Once the service is running, pass the public URI to
-# it (such as http://localhost:1234/swap if you run it
-# with default settings on your local machine) to the
-# token swap method in the iOS SDK:
-#
-# NSURL *swapServiceURL = [NSURL urlWithString:@"http://localhost:1234/swap"];
-#
-# -[SPAuth handleAuthCallbackWithTriggeredAuthURL:url
-#                   tokenSwapServiceEndpointAtURL:swapServiceURL
-#                                        callback:callback];
-#
-
-print "Starting spotify_token_swap tool\n"
+unless ENV['CLIENT_ID'] and ENV['CLIENT_SECRET'] and ENV['CLIENT_CALLBACK_URL']
+  raise StandardError.new "The environment must contain CLIENT_ID, CLIENT_SECRET, and CLIENT_CALLBACK_URL variables."
+end
 
 CLIENT_ID = ENV['CLIENT_ID']
 CLIENT_SECRET = ENV['CLIENT_SECRET']
-ENCRYPTION_SECRET = ENV['ENCRYPTION_SECRET']
 CLIENT_CALLBACK_URL = ENV['CLIENT_CALLBACK_URL']
+
+unless ENV['ENCRYPTION_DISABLED'] or ENV['ENCRYPTION_SECRET']
+  raise StandardError.new "Set env ENCRYPTION_SECRET or ENCRYPTION_DISABLED to disable encryption."
+end
 
 AUTH_HEADER = "Basic " + Base64.strict_encode64(CLIENT_ID + ":" + CLIENT_SECRET)
 SPOTIFY_ACCOUNTS_ENDPOINT = URI.parse("https://accounts.spotify.com")
+
+print "Starting spotify_token_swap tool\n"
 
 set :port, 1234         # The port to bind to.
 set :bind, '0.0.0.0'    # IP address of the interface to listen on (all)
@@ -76,9 +52,11 @@ post '/swap' do
     # encrypt the refresh token before forwarding to the client
     if response.code.to_i == 200
         token_data = JSON.parse(response.body)
-        refresh_token = token_data["refresh_token"]
-        encrypted_token = refresh_token.encrypt(:symmetric, :password => ENCRYPTION_SECRET)
-        token_data["refresh_token"] = encrypted_token
+        unless ENV['ENCRYPTION_DISABLED']
+            refresh_token = token_data["refresh_token"]
+            encrypted_token = refresh_token.encrypt(:symmetric, :password => ENV['ENCRYPTION_SECRET'])
+            token_data["refresh_token"] = encrypted_token
+        end
         response.body = JSON.dump(token_data)
     end
 
@@ -97,8 +75,12 @@ post '/refresh' do
 
     request.add_field("Authorization", AUTH_HEADER)
 
-    encrypted_token = params[:refresh_token]
-    refresh_token = encrypted_token.decrypt(:symmetric, :password => ENCRYPTION_SECRET)
+    unless ENV['ENCRYPTION_DISABLED']
+        encrypted_token = params[:refresh_token]
+        refresh_token = encrypted_token.decrypt(:symmetric, :password => ENV['ENCRYPTION_SECRET'])
+    else
+        refresh_token = params[:refresh_token]
+    end
 
     request.form_data = {
         "grant_type" => "refresh_token",
@@ -109,5 +91,4 @@ post '/refresh' do
 
     status response.code.to_i
     return response.body
-
 end
